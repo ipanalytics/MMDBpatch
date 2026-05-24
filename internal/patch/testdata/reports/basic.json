@@ -1,0 +1,76 @@
+{
+  "total": 2,
+  "applied": 2,
+  "skipped": 0,
+  "changed": 2,
+  "affected_networks": 2,
+  "changed_networks": 2,
+  "unchanged_networks": 0,
+  "fields_changed": [
+    "custom.source",
+    "geo.country.iso_code",
+    "traits.is_anonymous_proxy"
+  ],
+  "changes": [
+    {
+      "cidr": "203.0.113.0/24",
+      "network": "203.0.113.0/24",
+      "op": "merge",
+      "changed": true,
+      "fields_changed": [
+        "custom.source",
+        "geo.country.iso_code"
+      ],
+      "before": {
+        "geo": {
+          "country": {
+            "iso_code": "US"
+          }
+        },
+        "traits": {
+          "is_anonymous_proxy": true
+        }
+      },
+      "after": {
+        "custom": {
+          "source": "manual_override"
+        },
+        "geo": {
+          "country": {
+            "iso_code": "DE"
+          }
+        },
+        "traits": {
+          "is_anonymous_proxy": true
+        }
+      }
+    },
+    {
+      "cidr": "203.0.113.0/25",
+      "network": "203.0.113.0/24",
+      "op": "delete_field",
+      "changed": true,
+      "fields_changed": [
+        "traits.is_anonymous_proxy"
+      ],
+      "before": {
+        "geo": {
+          "country": {
+            "iso_code": "US"
+          }
+        },
+        "traits": {
+          "is_anonymous_proxy": true
+        }
+      },
+      "after": {
+        "geo": {
+          "country": {
+            "iso_code": "US"
+          }
+        },
+        "traits": {}
+      }
+    }
+  ]
+}

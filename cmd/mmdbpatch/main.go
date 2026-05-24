@@ -26,9 +26,14 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "validate" {
+		return runValidate(os.Args[2:])
+	}
+
 	var inputPath string
 	var patchPath string
 	var outputPath string
+	var reportPath string
 	var apply bool
 	var jsonDiff bool
 	var showVersion bool
@@ -36,6 +41,7 @@ func run() error {
 	flag.StringVar(&inputPath, "input", "", "input MMDB path")
 	flag.StringVar(&patchPath, "patch", "", "YAML patch file path")
 	flag.StringVar(&outputPath, "output", "", "output MMDB path; requires -apply")
+	flag.StringVar(&reportPath, "report", "", "write full JSON report to path")
 	flag.BoolVar(&apply, "apply", false, "write the patched MMDB instead of dry-run only")
 	flag.BoolVar(&jsonDiff, "json", false, "print dry-run diff as JSON lines")
 	flag.BoolVar(&showVersion, "version", false, "print version information")
@@ -75,6 +81,12 @@ func run() error {
 		return err
 	}
 	printReport(report, jsonDiff)
+	if reportPath != "" {
+		if err := patch.WriteReport(reportPath, report); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "wrote report: %s\n", reportPath)
+	}
 
 	if !apply {
 		fmt.Fprintln(os.Stderr, "dry-run only; pass -apply and -output to write a patched MMDB")
@@ -103,6 +115,28 @@ func run() error {
 	return nil
 }
 
+func runValidate(args []string) error {
+	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
+	var patchPath string
+	fs.StringVar(&patchPath, "patch", "", "YAML patch file path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if patchPath == "" {
+		return errors.New("validate requires -patch")
+	}
+
+	patchFile, err := patch.LoadFile(patchPath)
+	if err != nil {
+		return err
+	}
+	if err := patchFile.Validate(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "valid patch file: %s\n", patchPath)
+	return nil
+}
+
 func writerOptions(reader *maxminddb.Reader) mmdbwriter.Options {
 	metadata := reader.Metadata
 	return mmdbwriter.Options{
@@ -127,7 +161,15 @@ func printReport(report patch.Report, asJSON bool) {
 		fmt.Printf("  before: %s\n", compactJSON(change.Before))
 		fmt.Printf("  after:  %s\n", compactJSON(change.After))
 	}
-	fmt.Fprintf(os.Stderr, "patches: %d, changed: %d\n", report.Total, report.Changed)
+	fmt.Fprintf(
+		os.Stderr,
+		"patches: %d, applied: %d, skipped: %d, affected_networks: %d, changed_networks: %d\n",
+		report.Total,
+		report.Applied,
+		report.Skipped,
+		report.AffectedNetworks,
+		report.ChangedNetworks,
+	)
 }
 
 func compactJSON(v any) string {

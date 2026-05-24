@@ -23,6 +23,7 @@ Declarative patching for MaxMind DB files. MMDBpatch applies reviewed YAML overl
 | Repository | [github.com/ipanalytics/MMDBpatch](https://github.com/ipanalytics/MMDBpatch) |
 | Releases | [GitHub Releases](https://github.com/ipanalytics/MMDBpatch/releases) |
 | Example patch | [examples/patches.yaml](./examples/patches.yaml) |
+| Patch schema | [schema/mmdbpatch.schema.json](./schema/mmdbpatch.schema.json) |
 | MaxMind DB writer | [github.com/maxmind/mmdbwriter](https://github.com/maxmind/mmdbwriter) |
 
 ## Overview
@@ -32,6 +33,10 @@ Operational teams often maintain local corrections and enrichment data for GeoIP
 MMDBpatch turns those corrections into data:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ipanalytics/MMDBpatch/main/schema/mmdbpatch.schema.json
+defaults:
+  conflict: patch_wins
+
 patches:
   - cidr: 203.0.113.0/24
     op: merge
@@ -61,19 +66,23 @@ flowchart LR
     E --> G["Release / deployment"]
 ```
 
-By default the CLI performs a dry run and prints before/after records for each patch. Writing a database requires an explicit `-apply` flag and output path.
+By default the CLI performs a dry run and prints before/after records for each affected network. Writing a database requires an explicit `-apply` flag and output path.
 
 ## Features
 
 | Capability | Description |
 | --- | --- |
 | Declarative patches | YAML operations for CIDR-scoped MMDB changes. |
+| Patch validation | Validate YAML patch files without an input database. |
+| JSON Schema | Editor and CI validation through `schema/mmdbpatch.schema.json`. |
 | Dry-run first | Default mode prints the proposed changes without writing output. |
-| Before/after diff | Human-readable or JSON-lines output for review and automation. |
+| Full affected-network diff | Uses `NetworksWithin` to report affected records under the patched CIDR. |
+| Before/after diff | Human-readable, JSON-lines, or full JSON report output. |
 | Merge semantics | Deep-merge overlay values while preserving unrelated record fields. |
 | Record replacement | Replace selected networks with controlled records. |
 | Field deletion | Remove specific dotted paths from selected records. |
 | Record deletion | Remove selected networks from the database tree. |
+| Conflict strategies | Define behavior for overlapping patch CIDRs. |
 | Reproducible output | Same input database and patch file produce the same patched result. |
 
 ## Quick Start
@@ -101,6 +110,21 @@ mmdbpatch \
   -input GeoLite2-City.mmdb \
   -patch patches.yaml \
   -json
+```
+
+Write the full report to a JSON file:
+
+```sh
+mmdbpatch \
+  -input GeoLite2-City.mmdb \
+  -patch patches.yaml \
+  -report reports/mmdbpatch.json
+```
+
+Validate a patch file without opening an MMDB:
+
+```sh
+mmdbpatch validate -patch patches.yaml
 ```
 
 ## Installation
@@ -135,8 +159,18 @@ Usage of mmdbpatch:
         output MMDB path; requires -apply
   -patch string
         YAML patch file path
+  -report string
+        write full JSON report to path
   -version
         print version information
+```
+
+Patch validation:
+
+```text
+Usage of mmdbpatch validate:
+  -patch string
+        YAML patch file path
 ```
 
 ### Merge Fields
@@ -181,11 +215,12 @@ patches:
 
 ## Outputs
 
-MMDBpatch produces two operational artifacts:
+MMDBpatch produces three operational artifacts:
 
 | Artifact | Description |
 | --- | --- |
-| Dry-run diff | Before/after records for each patch, printed to stdout. |
+| Dry-run diff | Before/after records for each affected network, printed to stdout. |
+| JSON report | Complete report written with `-report`, including summary counters and changed fields. |
 | Patched MMDB | New MaxMind DB file written only when `-apply` and `-output` are set. |
 
 Example human-readable dry-run output:
@@ -194,13 +229,30 @@ Example human-readable dry-run output:
 merge 203.0.113.0/24
   before: {"geo":{"country":{"iso_code":"US"}}}
   after:  {"custom":{"risk":"lab","source":"manual_override"},"geo":{"country":{"iso_code":"DE"}}}
-patches: 1, changed: 1
+patches: 1, applied: 1, skipped: 0, affected_networks: 1, changed_networks: 1
 ```
 
 Example JSON-lines output:
 
 ```json
-{"cidr":"203.0.113.0/24","op":"merge","before":{"geo":{"country":{"iso_code":"US"}}},"after":{"custom":{"risk":"lab","source":"manual_override"},"geo":{"country":{"iso_code":"DE"}}}}
+{"cidr":"203.0.113.0/24","network":"203.0.113.0/24","op":"merge","changed":true,"fields_changed":["custom.risk","custom.source","geo.country.iso_code"],"before":{"geo":{"country":{"iso_code":"US"}}},"after":{"custom":{"risk":"lab","source":"manual_override"},"geo":{"country":{"iso_code":"DE"}}}}
+```
+
+Example report summary:
+
+```json
+{
+  "total": 2,
+  "applied": 2,
+  "skipped": 0,
+  "affected_networks": 2,
+  "changed_networks": 2,
+  "fields_changed": [
+    "custom.source",
+    "geo.country.iso_code",
+    "traits.is_anonymous_proxy"
+  ]
+}
 ```
 
 ## Patch Format
@@ -208,6 +260,10 @@ Example JSON-lines output:
 Top-level document:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ipanalytics/MMDBpatch/main/schema/mmdbpatch.schema.json
+defaults:
+  conflict: patch_wins
+
 patches:
   - cidr: 203.0.113.0/24
     op: merge
@@ -223,6 +279,32 @@ Supported operations:
 | `replace` | `cidr`, `set` | Replaces the record for the CIDR with `set`. |
 | `delete_field` | `cidr`, `field` | Deletes one dotted field path from the existing record. |
 | `delete_record` | `cidr` | Removes the record for the CIDR. |
+
+Conflict strategies:
+
+| Strategy | Behavior |
+| --- | --- |
+| `patch_wins` | Apply patches in file order. Later overlapping patches can refine earlier ranges. |
+| `first_wins` | Apply the first patch for an overlapping range and skip later overlapping patches. |
+| `fail_on_overlap` | Reject the patch file when two patch CIDRs overlap. |
+
+Set a default for the patch file:
+
+```yaml
+defaults:
+  conflict: fail_on_overlap
+```
+
+Override it for a single patch:
+
+```yaml
+patches:
+  - cidr: 203.0.113.0/24
+    op: merge
+    conflict: patch_wins
+    set:
+      custom.source: "manual_override"
+```
 
 Field paths are dot-separated:
 
@@ -250,8 +332,10 @@ Nested YAML maps are accepted when they are a better fit for the data.
 - Treat patch files as release artifacts. Review them the same way you review firewall, routing, detection, or enrichment changes.
 - Keep source MMDB checksums with release metadata when reproducibility matters.
 - Run dry-run mode in pull requests and deployment previews.
+- Use `mmdbpatch validate` in pre-commit hooks and CI jobs.
 - Write patched databases to a new path and promote them through the same rollout mechanism used for the original database.
 - Use JSON-lines diff output when integrating with CI logs, artifact storage, or approval systems.
+- Store full `-report` JSON artifacts for audit trails when overrides affect production datasets.
 
 ## Use Cases
 
@@ -284,8 +368,8 @@ Out of scope:
 
 ## Limitations
 
-- Dry-run currently reports a representative lookup for each CIDR rather than a full per-subnet expansion of every affected record.
-- Patch conflict handling is intentionally simple in the initial implementation; overlapping CIDRs are applied in file order.
+- Diff reporting follows MaxMind DB network iteration behavior. When a patch CIDR is contained by a larger database network, the containing network is reported as the affected source record.
+- Conflict strategies apply to overlapping patch CIDRs. They do not attempt to infer business ownership of fields inside a record.
 - Output compatibility depends on the input database structure and reader expectations for that database type.
 
 ## Directory Structure
@@ -295,8 +379,10 @@ Out of scope:
 ├── cmd/mmdbpatch/          # CLI entrypoint
 ├── examples/               # Example patch files
 ├── internal/patch/         # Patch parser, diff logic, and MMDB mutation engine
+├── schema/                 # JSON Schema for patch files
 ├── site/                   # Repository visual assets
 ├── .github/workflows/      # CI and release automation
+├── .github/actions/        # Reusable local GitHub Actions
 ├── go.mod
 ├── LICENSE
 └── README.md
@@ -325,6 +411,18 @@ Recommended pipeline stages:
 | Build | Apply patch to a pinned input database. |
 | Verify | Run downstream lookup checks against known prefixes. |
 | Promote | Publish the patched MMDB through existing artifact rollout. |
+
+### GitHub Actions
+
+This repository includes a local validation action:
+
+```yaml
+- uses: ipanalytics/MMDBpatch/.github/actions/validate@v0.1.0
+  with:
+    patch: overlays/production.yaml
+```
+
+For repository-local checks, the included CI workflow validates `examples/patches.yaml`, runs tests, and runs `go vet`.
 
 <details>
 <summary>Release workflow</summary>

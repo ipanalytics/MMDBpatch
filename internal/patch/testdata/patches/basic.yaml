@@ -6,9 +6,8 @@ patches:
     op: merge
     set:
       custom.source: "manual_override"
-      custom.risk: "lab"
       geo.country.iso_code: "DE"
 
-  - cidr: 198.51.100.0/24
+  - cidr: 203.0.113.0/25
     op: delete_field
     field: traits.is_anonymous_proxy

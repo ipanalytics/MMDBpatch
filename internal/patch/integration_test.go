@@ -1,6 +1,8 @@
 package patch
 
 import (
+	"bytes"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -92,6 +94,115 @@ func TestApplyWritesPatchedMMDB(t *testing.T) {
 	if _, ok := traits["is_anonymous_proxy"]; ok {
 		t.Fatal("traits.is_anonymous_proxy was not deleted")
 	}
+}
+
+func TestDiffMatchesGoldenReport(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.mmdb")
+	tree := newTestTree(t)
+	if err := writeTree(input, tree); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := maxminddb.Open(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	patchFile, err := LoadFile("testdata/patches/basic.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := Diff(reader, patchFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("testdata/reports/basic.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	if !bytes.Equal(got, want) {
+		t.Fatalf("report mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestValidateRejectsOverlappingPatchesWhenConfigured(t *testing.T) {
+	f := File{
+		Defaults: Defaults{Conflict: ConflictFailOverlap},
+		Patches: []Operation{
+			{CIDR: "203.0.113.0/24", Op: "merge", Set: map[string]any{"custom.source": "a"}},
+			{CIDR: "203.0.113.0/25", Op: "merge", Set: map[string]any{"custom.source": "b"}},
+		},
+	}
+	if err := f.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want overlap error")
+	}
+}
+
+func TestFirstWinsSkipsLaterOverlappingPatch(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.mmdb")
+	tree := newTestTree(t)
+	if err := writeTree(input, tree); err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := maxminddb.Open(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	report, err := Diff(reader, File{
+		Defaults: Defaults{Conflict: ConflictFirstWins},
+		Patches: []Operation{
+			{CIDR: "203.0.113.0/24", Op: "merge", Set: map[string]any{"custom.source": "a"}},
+			{CIDR: "203.0.113.0/25", Op: "merge", Set: map[string]any{"custom.source": "b"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Applied != 1 || report.Skipped != 1 {
+		t.Fatalf("applied/skipped = %d/%d, want 1/1", report.Applied, report.Skipped)
+	}
+}
+
+func newTestTree(t *testing.T) *mmdbwriter.Tree {
+	t.Helper()
+	tree, err := mmdbwriter.New(mmdbwriter.Options{
+		DatabaseType:            "mmdbpatch-test",
+		Description:             map[string]string{"en": "mmdbpatch test"},
+		IPVersion:               4,
+		IncludeReservedNetworks: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, network, err := net.ParseCIDR("203.0.113.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tree.Insert(network, mmdbtype.Map{
+		"geo": mmdbtype.Map{
+			"country": mmdbtype.Map{
+				"iso_code": mmdbtype.String("US"),
+			},
+		},
+		"traits": mmdbtype.Map{
+			"is_anonymous_proxy": mmdbtype.Bool(true),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return tree
 }
 
 func writeTree(path string, tree *mmdbwriter.Tree) error {
