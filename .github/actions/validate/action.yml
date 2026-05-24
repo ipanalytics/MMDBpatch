@@ -1,0 +1,28 @@
+name: Validate MMDBpatch file
+description: Validate an MMDBpatch YAML patch file.
+
+inputs:
+  patch:
+    description: Path to the YAML patch file.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ github.action_path }}/../../../go.mod
+        cache: true
+
+    - name: Validate patch
+      shell: bash
+      run: |
+        set -euo pipefail
+        repo_root="${GITHUB_ACTION_PATH}/../../.."
+        patch_path="${{ inputs.patch }}"
+        if [[ "${patch_path}" != /* ]]; then
+          patch_path="${GITHUB_WORKSPACE}/${patch_path}"
+        fi
+        cd "${repo_root}"
+        go run ./cmd/mmdbpatch validate -patch "${patch_path}"
