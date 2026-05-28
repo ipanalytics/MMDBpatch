@@ -3,7 +3,7 @@
 Declarative patching for MaxMind DB files. MMDBpatch applies reviewed YAML overlays to existing `.mmdb` databases, producing reproducible patched databases with dry-run diffs suitable for infrastructure, security, fraud/risk, and analytics workflows.
 
 <p align="center">
-  <img src="./site/banner.svg" alt="MMDBpatch banner" width="100%">
+  <img src="./site/banner.png" alt="MMDBpatch banner" width="100%">
 </p>
 
 <p align="center">
